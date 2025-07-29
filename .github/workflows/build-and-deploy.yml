@@ -2,55 +2,17 @@ name: Build and Deploy to GCR
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GCR_LOCATION: gcr.io
-  SERVICE: channels-ws
-  REGION: us-central1
+  REPOSITORY: "europe-west4-docker.pkg.dev/calm-pagoda-465816-m0/channels-ws"
+  SERVICE: "server"
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.23.4'
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Run tests
-      run: go test -v ./...
-
-    - name: Run go vet
-      run: go vet ./...
-
-    - name: Run go fmt check
-      run: |
-        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-          echo "The following files are not formatted:"
-          gofmt -s -l .
-          exit 1
-        fi
-
   build-and-deploy:
-    needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
@@ -58,93 +20,46 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
       with:
-        go-version: '1.23.4'
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Build Go application
-      run: |
-        go mod download
-        CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o main .
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
 
     - name: Set up Cloud SDK
       uses: google-github-actions/setup-gcloud@v2
       with:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-    - name: Authenticate to Google Cloud
-      uses: google-github-actions/auth@v2
-      with:
-        credentials_json: ${{ secrets.GCP_SA_KEY }}
-
-    - name: Configure Docker to use gcloud as a credential helper
+    - name: Configure Docker to use gcloud
       run: |
-        gcloud auth configure-docker
+        gcloud auth configure-docker europe-west4-docker.pkg.dev
 
     - name: Get short SHA
       id: sha
       run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-    - name: Build Docker image
-      run: |
-        docker build -t $GCR_LOCATION/$PROJECT_ID/$SERVICE:${{ steps.sha.outputs.sha_short }} .
-        docker build -t $GCR_LOCATION/$PROJECT_ID/$SERVICE:latest .
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
-    - name: Push Docker image to GCR
-      run: |
-        docker push $GCR_LOCATION/$PROJECT_ID/$SERVICE:${{ steps.sha.outputs.sha_short }}
-        docker push $GCR_LOCATION/$PROJECT_ID/$SERVICE:latest
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-    - name: Deploy to Cloud Run (optional)
-      run: |
-        gcloud run deploy $SERVICE \
-          --image $GCR_LOCATION/$PROJECT_ID/$SERVICE:${{ steps.sha.outputs.sha_short }} \
-          --platform managed \
-          --region $REGION \
-          --allow-unauthenticated \
-          --port 8080 \
-          --memory 512Mi \
-          --cpu 1 \
-          --min-instances 0 \
-          --max-instances 10
-      # Remove this step if you don't want automatic deployment to Cloud Run
-
-  build-pr:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
+    - name: Build and push
+      uses: docker/build-push-action@v6
       with:
-        go-version: '1.23.4'
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
-    - name: Build Go application (PR check)
-      run: |
-        go mod download
-        CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o main .
-
-    - name: Build Docker image (PR check)
-      run: |
-        docker build -t channels-ws:pr-${{ github.event.number }} .
+        push: true
+        tags: |
+          ${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ steps.sha.outputs.sha_short }}
+          ${{ env.REPOSITORY }}/${{ env.SERVICE }}:latest
+    # - name: Deploy to Cloud Run (optional)
+    #   run: |
+    #     gcloud run deploy $SERVICE \
+    #       --image ${{ env.REPOSITORY }}/${{ env.SERVICE }}:${{ steps.sha.outputs.sha_short }} \
+    #       --platform managed \
+    #       --region europe-west4 \
+    #       --allow-unauthenticated \
+    #       --port 8080 \
+    #       --memory 512Mi \
+    #       --cpu 1 \
+    #       --min-instances 0 \
+    #       --max-instances 1

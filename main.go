@@ -15,7 +15,6 @@ import (
 
 func main() {
 	cfg := config.Load()
-	log.Printf("Starting channels.ws server on port %s", cfg.Port)
 
 	db, err := database.New(cfg.DatabasePath)
 	if err != nil {
@@ -34,9 +33,13 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
 	go func() {
-		log.Printf("Server starting on %s", cfg.Port)
-		if err := http.ListenAndServe(cfg.Port, nil); err != nil {
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()

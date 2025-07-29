@@ -6,7 +6,6 @@ import (
 )
 
 type Config struct {
-	Port           string
 	DatabasePath   string
 	MaxPayloadSize int64
 	SessionTimeout time.Duration
@@ -22,7 +21,6 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port:           getEnv("PORT", ":8080"),
 		DatabasePath:   getEnv("DATABASE_PATH", "./channels.db"),
 		MaxPayloadSize: 16 << 20, // 16MB
 		SessionTimeout: 10 * time.Second,
